@@ -42,6 +42,7 @@ new ArgusVectorStack(app, `${PROJECT_NAME}-${DEV_STAGE}`, {
   config: {
     ...getDevEnvironmentConfig(DEV_STAGE, AWS_ACCOUNT_ID, AWS_REGION),
     name: "qa", // Type constraint - uses QA-like settings
+    stageName: DEV_STAGE, // Use actual stage name for SSM params and exports
   },
   env: { account: AWS_ACCOUNT_ID, region: AWS_REGION },
   stackName: `${PROJECT_NAME}-${DEV_STAGE}`,

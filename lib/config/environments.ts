@@ -31,9 +31,15 @@ export interface QdrantConfig {
 
 export interface EnvironmentConfig {
   /**
-   * Environment name
+   * Environment name (for resource sizing/settings: qa, uat, prod)
    */
   name: EnvironmentName;
+
+  /**
+   * Stage name for SSM parameters and cross-stack references
+   * Defaults to `name` but can be overridden for dev stacks (e.g., dev-jw)
+   */
+  stageName?: string;
 
   /**
    * AWS account and region
