@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "CDK infrastructure for QDrant vector database",
   "scripts": {
+    "prepare": "lefthook install",
     "build": "tsc",
     "watch": "tsc -w",
     "test": "vitest run",
@@ -16,9 +17,17 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "lint:test": "eslint --fix-dry-run .",
+    "deps": "depcruise --config .dependency-cruiser.cjs src lib",
+    "dead-code": "knip",
+    "duplication": "jscpd src lib",
+    "mutate": "stryker run",
+    "quality": "npm run lint:test && npm run deps && npm run dead-code && npm run duplication"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "^9.4.0",
+    "@stryker-mutator/vitest-runner": "^9.4.0",
     "@aws-sdk/client-cloudformation": "^3.971.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.971.0",
     "@aws-sdk/client-ecs": "^3.971.0",
@@ -30,6 +39,9 @@
     "aws-cdk": "^2.190.0",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
+    "dependency-cruiser": "^17.3.7",
+    "jscpd": "^4.0.7",
+    "knip": "^5.82.1",
     "lefthook": "^1.6.0",
     "prettier": "^3.2.0",
     "ts-node": "^10.9.2",
