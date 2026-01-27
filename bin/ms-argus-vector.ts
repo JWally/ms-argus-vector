@@ -3,11 +3,7 @@ import "source-map-support/register";
 import * as cdk from "aws-cdk-lib";
 import { CliCredentialsStackSynthesizer } from "aws-cdk-lib";
 import { ArgusVectorStack, PipelineStack } from "../lib/stacks";
-import {
-  getEnvironmentConfig,
-  getDevEnvironmentConfig,
-  PIPELINE_STAGES,
-} from "../lib/config";
+import { getEnvironmentConfig, PIPELINE_STAGES } from "../lib/config";
 import {
   AWS_ACCOUNT_ID,
   AWS_REGION,
@@ -31,24 +27,20 @@ if (!AWS_ACCOUNT_ID) {
 // Personal Dev Stack (ms-argus-vector-dev-jw)
 // -----------------------------------------------------------------------------
 // To add your own dev stack:
-// 1. Copy this block and change DEV_STAGE to your initials (e.g., "dev-ab")
+// 1. Copy this block and change DEV_ENVIRONMENT to your initials (e.g., "dev-ab")
 // 2. Run: cdk bootstrap (once per region if not already done)
 // 3. Run: cdk deploy ms-argus-vector-dev-{initials}
 // =============================================================================
 
-const DEV_STAGE = "dev-jw";
+const DEV_ENVIRONMENT = "dev-jw";
 
-new ArgusVectorStack(app, `${PROJECT_NAME}-${DEV_STAGE}`, {
-  config: {
-    ...getDevEnvironmentConfig(DEV_STAGE, AWS_ACCOUNT_ID, AWS_REGION),
-    name: "qa", // Type constraint - uses QA-like settings
-    stageName: DEV_STAGE, // Use actual stage name for SSM params and exports
-  },
+new ArgusVectorStack(app, `${PROJECT_NAME}-${DEV_ENVIRONMENT}`, {
+  config: getEnvironmentConfig(DEV_ENVIRONMENT, "qa", AWS_ACCOUNT_ID, AWS_REGION),
   env: { account: AWS_ACCOUNT_ID, region: AWS_REGION },
-  stackName: `${PROJECT_NAME}-${DEV_STAGE}`,
+  stackName: `${PROJECT_NAME}-${DEV_ENVIRONMENT}`,
   synthesizer: new CliCredentialsStackSynthesizer(),
   tags: {
-    Environment: DEV_STAGE,
+    Environment: DEV_ENVIRONMENT,
     Project: PROJECT_NAME,
     Owner: "jw",
     ManagedBy: "cdk",
@@ -64,14 +56,19 @@ new ArgusVectorStack(app, `${PROJECT_NAME}-${DEV_STAGE}`, {
 
 // Create stacks for each pipeline stage (for CDK synth)
 for (const stage of PIPELINE_STAGES) {
-  const config = getEnvironmentConfig(stage.envName, AWS_ACCOUNT_ID, AWS_REGION);
+  const config = getEnvironmentConfig(
+    stage.environment,
+    stage.stage,
+    AWS_ACCOUNT_ID,
+    AWS_REGION
+  );
 
   new ArgusVectorStack(app, `ArgusVector-${stage.name}`, {
     config,
     env: config.env,
-    stackName: `${PROJECT_NAME}-${stage.envName}`,
+    stackName: `${PROJECT_NAME}-${stage.environment}`,
     tags: {
-      Environment: stage.envName,
+      Environment: stage.environment,
       Project: PROJECT_NAME,
       ManagedBy: "cdk-pipeline",
     },

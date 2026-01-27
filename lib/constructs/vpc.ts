@@ -1,5 +1,6 @@
 import { Construct } from "constructs";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
+import * as ssm from "aws-cdk-lib/aws-ssm";
 import * as cdk from "aws-cdk-lib";
 import type { EnvironmentConfig } from "../config";
 
@@ -9,7 +10,12 @@ export interface ArgusVpcProps {
 
 /**
  * VPC construct for Argus Vector infrastructure.
- * Creates a VPC with public and private subnets across multiple AZs.
+ *
+ * Imports the shared VPC from ms-argus-infra via SSM Parameter Store.
+ * Creates service-specific security groups for ECS and EFS.
+ *
+ * Required SSM parameters (created by ms-argus-infra):
+ *   /argus/{environment}/vpc-id
  */
 export class ArgusVpc extends Construct {
   public readonly vpc: ec2.IVpc;
@@ -20,30 +26,33 @@ export class ArgusVpc extends Construct {
     super(scope, id);
 
     const { config } = props;
+    const { environment } = config;
 
-    // Create VPC with private subnets for ECS tasks
-    this.vpc = new ec2.Vpc(this, "Vpc", {
-      vpcName: `argus-vector-${config.name}-vpc`,
-      maxAzs: config.vpc.maxAzs,
-      natGateways: config.vpc.natGateways,
-      subnetConfiguration: [
-        {
-          name: "Public",
-          subnetType: ec2.SubnetType.PUBLIC,
-          cidrMask: 24,
-        },
-        {
-          name: "Private",
-          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-          cidrMask: 24,
-        },
-      ],
+    // =========================================================================
+    // IMPORT SHARED VPC FROM MS-ARGUS-INFRA
+    // =========================================================================
+
+    const ssmPrefix = `/argus/${environment}`;
+
+    // Use valueFromLookup for synth-time resolution (required for VPC lookup)
+    const vpcId = ssm.StringParameter.valueFromLookup(
+      this,
+      `${ssmPrefix}/vpc-id`
+    );
+
+    // Import VPC - this requires the VPC to already exist
+    this.vpc = ec2.Vpc.fromLookup(this, "SharedVpc", {
+      vpcId,
     });
+
+    // =========================================================================
+    // SECURITY GROUPS (service-specific, created here)
+    // =========================================================================
 
     // Security group for EFS
     this.efsSecurityGroup = new ec2.SecurityGroup(this, "EfsSecurityGroup", {
       vpc: this.vpc,
-      securityGroupName: `argus-vector-${config.name}-efs-sg`,
+      securityGroupName: `argus-vector-${environment}-efs-sg`,
       description: "Security group for EFS mount targets",
       allowAllOutbound: false,
     });
@@ -51,7 +60,7 @@ export class ArgusVpc extends Construct {
     // Security group for ECS tasks
     this.ecsSecurityGroup = new ec2.SecurityGroup(this, "EcsSecurityGroup", {
       vpc: this.vpc,
-      securityGroupName: `argus-vector-${config.name}-ecs-sg`,
+      securityGroupName: `argus-vector-${environment}-ecs-sg`,
       description: "Security group for QDrant ECS tasks",
       allowAllOutbound: true,
     });
@@ -85,8 +94,11 @@ export class ArgusVpc extends Construct {
       );
     }
 
-    // Tags
-    cdk.Tags.of(this).add("Environment", config.name);
+    // =========================================================================
+    // TAGS
+    // =========================================================================
+
+    cdk.Tags.of(this).add("Environment", environment);
     cdk.Tags.of(this).add("Service", "argus-vector");
   }
 }

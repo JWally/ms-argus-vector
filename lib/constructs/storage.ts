@@ -22,17 +22,18 @@ export class ArgusStorage extends Construct {
     super(scope, id);
 
     const { config, vpc, securityGroup } = props;
+    const { environment, stage } = config;
 
     // Create EFS file system
     const fs = new efs.FileSystem(this, "FileSystem", {
-      fileSystemName: `argus-vector-${config.name}-efs`,
+      fileSystemName: `argus-vector-${environment}-efs`,
       vpc,
       securityGroup,
       encrypted: true,
       performanceMode: efs.PerformanceMode.GENERAL_PURPOSE,
       throughputMode: efs.ThroughputMode.BURSTING,
       removalPolicy:
-        config.name === "prod"
+        stage === "prod"
           ? cdk.RemovalPolicy.RETAIN
           : cdk.RemovalPolicy.DESTROY,
       enableAutomaticBackups: config.efs.enableBackups,
@@ -64,7 +65,7 @@ export class ArgusStorage extends Construct {
     });
 
     // Tags
-    cdk.Tags.of(this).add("Environment", config.name);
+    cdk.Tags.of(this).add("Environment", environment);
     cdk.Tags.of(this).add("Service", "argus-vector");
   }
 

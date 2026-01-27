@@ -1,6 +1,9 @@
 import type { Environment } from "aws-cdk-lib";
 
-export type EnvironmentName = "qa" | "uat" | "prod";
+/**
+ * Stage name for config lookup (sizing, thresholds, etc.)
+ */
+export type StageName = "qa" | "uat" | "prod";
 
 export interface QdrantConfig {
   /**
@@ -31,15 +34,16 @@ export interface QdrantConfig {
 
 export interface EnvironmentConfig {
   /**
-   * Environment name (for resource sizing/settings: qa, uat, prod)
+   * Environment name for resource naming (e.g., "dev-jw", "qa", "prod")
+   * All AWS resources will be named with this value.
    */
-  name: EnvironmentName;
+  environment: string;
 
   /**
-   * Stage name for SSM parameters and cross-stack references
-   * Defaults to `name` but can be overridden for dev stacks (e.g., dev-jw)
+   * Stage for config lookup (sizing, retention policies, etc.)
+   * Maps to predefined configurations: "qa", "uat", "prod"
    */
-  stageName?: string;
+  stage: StageName;
 
   /**
    * AWS account and region
@@ -76,98 +80,16 @@ export interface EnvironmentConfig {
 }
 
 /**
- * Get environment configuration by name
+ * Stage-specific configuration (sizing, retention, etc.)
  */
-export function getEnvironmentConfig(
-  envName: EnvironmentName,
-  account: string,
-  region: string = "us-east-1"
-): EnvironmentConfig {
-  const baseConfig = {
-    env: { account, region },
-  };
-
-  switch (envName) {
-    case "qa":
-      return {
-        ...baseConfig,
-        name: "qa",
-        qdrant: {
-          nodeCount: 1,
-          cpu: 512,
-          memoryMiB: 1024,
-          imageTag: "latest",
-          enableApiKey: true,
-        },
-        vpc: {
-          maxAzs: 2,
-          natGateways: 1,
-        },
-        efs: {
-          enableBackups: false,
-          lifecycleInfrequentAccessDays: 7,
-        },
-      };
-
-    case "uat":
-      return {
-        ...baseConfig,
-        name: "uat",
-        qdrant: {
-          nodeCount: 1,
-          cpu: 1024,
-          memoryMiB: 2048,
-          imageTag: "latest",
-          enableApiKey: true,
-        },
-        vpc: {
-          maxAzs: 2,
-          natGateways: 1,
-        },
-        efs: {
-          enableBackups: true,
-          lifecycleInfrequentAccessDays: 14,
-        },
-      };
-
-    case "prod":
-      return {
-        ...baseConfig,
-        name: "prod",
-        qdrant: {
-          nodeCount: 3,
-          cpu: 2048,
-          memoryMiB: 4096,
-          imageTag: "v1.12.6", // Pin to stable version in prod
-          enableApiKey: true,
-        },
-        vpc: {
-          maxAzs: 3,
-          natGateways: 3,
-        },
-        efs: {
-          enableBackups: true,
-          lifecycleInfrequentAccessDays: 30,
-        },
-      };
-
-    default:
-      throw new Error(`Unknown environment: ${envName}`);
-  }
+interface StageConfig {
+  qdrant: QdrantConfig;
+  vpc: { maxAzs: number; natGateways: number };
+  efs: { enableBackups: boolean; lifecycleInfrequentAccessDays: number };
 }
 
-/**
- * Personal dev environment configuration
- * Used for individual developer stacks (e.g., dev-jw)
- */
-export function getDevEnvironmentConfig(
-  stageName: string,
-  account: string,
-  region: string = "us-east-1"
-): EnvironmentConfig {
-  return {
-    name: "qa", // Use QA-like settings for dev
-    env: { account, region },
+const STAGE_CONFIGS: Record<StageName, StageConfig> = {
+  qa: {
     qdrant: {
       nodeCount: 1,
       cpu: 512,
@@ -183,24 +105,79 @@ export function getDevEnvironmentConfig(
       enableBackups: false,
       lifecycleInfrequentAccessDays: 7,
     },
+  },
+  uat: {
+    qdrant: {
+      nodeCount: 1,
+      cpu: 1024,
+      memoryMiB: 2048,
+      imageTag: "latest",
+      enableApiKey: true,
+    },
+    vpc: {
+      maxAzs: 2,
+      natGateways: 1,
+    },
+    efs: {
+      enableBackups: true,
+      lifecycleInfrequentAccessDays: 14,
+    },
+  },
+  prod: {
+    qdrant: {
+      nodeCount: 3,
+      cpu: 2048,
+      memoryMiB: 4096,
+      imageTag: "v1.12.6", // Pin to stable version in prod
+      enableApiKey: true,
+    },
+    vpc: {
+      maxAzs: 3,
+      natGateways: 3,
+    },
+    efs: {
+      enableBackups: true,
+      lifecycleInfrequentAccessDays: 30,
+    },
+  },
+};
+
+/**
+ * Get environment configuration
+ *
+ * @param environment - Environment name for resource naming (e.g., "dev-jw", "qa", "prod")
+ * @param stage - Stage for config lookup ("qa", "uat", "prod")
+ * @param account - AWS account ID
+ * @param region - AWS region
+ */
+export function getEnvironmentConfig(
+  environment: string,
+  stage: StageName,
+  account: string,
+  region: string = "us-east-1"
+): EnvironmentConfig {
+  const stageConfig = STAGE_CONFIGS[stage];
+
+  return {
+    environment,
+    stage,
+    env: { account, region },
+    ...stageConfig,
   };
 }
 
 /**
  * Resource naming helper
  */
-export function resourceName(
-  envName: string,
-  resource: string
-): string {
-  return `argus-vector-${envName}-${resource}`;
+export function resourceName(environment: string, resource: string): string {
+  return `argus-vector-${environment}-${resource}`;
 }
 
 /**
  * Pipeline stages in deployment order
  */
-export const PIPELINE_STAGES: { name: string; envName: EnvironmentName }[] = [
-  { name: "QA", envName: "qa" },
-  { name: "Uat", envName: "uat" },
-  { name: "Prod", envName: "prod" },
+export const PIPELINE_STAGES: { name: string; environment: string; stage: StageName }[] = [
+  { name: "QA", environment: "qa", stage: "qa" },
+  { name: "Uat", environment: "uat", stage: "uat" },
+  { name: "Prod", environment: "prod", stage: "prod" },
 ];

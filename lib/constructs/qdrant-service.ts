@@ -31,11 +31,12 @@ export class QdrantService extends Construct {
     super(scope, id);
 
     const { config, vpc, securityGroup, fileSystem, accessPoint } = props;
+    const { environment, stage } = config;
 
     // Create API key secret
     this.apiSecret = new secretsmanager.Secret(this, "ApiSecret", {
-      secretName: `argus-vector/${config.name}/qdrant-api-key`,
-      description: `QDrant API key for ${config.name} environment`,
+      secretName: `argus-vector/${environment}/qdrant-api-key`,
+      description: `QDrant API key for ${environment} environment`,
       generateSecretString: {
         excludePunctuation: true,
         passwordLength: 32,
@@ -44,9 +45,9 @@ export class QdrantService extends Construct {
 
     // Create ECS cluster
     this.cluster = new ecs.Cluster(this, "Cluster", {
-      clusterName: `argus-vector-${config.name}`,
+      clusterName: `argus-vector-${environment}`,
       vpc,
-      containerInsightsV2: config.name === "prod"
+      containerInsightsV2: stage === "prod"
         ? ecs.ContainerInsights.ENABLED
         : ecs.ContainerInsights.DISABLED,
     });
@@ -55,21 +56,21 @@ export class QdrantService extends Construct {
     let namespace: servicediscovery.IPrivateDnsNamespace | undefined;
     if (config.qdrant.nodeCount > 1) {
       namespace = new servicediscovery.PrivateDnsNamespace(this, "Namespace", {
-        name: `qdrant.${config.name}.local`,
+        name: `qdrant.${environment}.local`,
         vpc,
-        description: `QDrant service discovery for ${config.name}`,
+        description: `QDrant service discovery for ${environment}`,
       });
     }
 
     // Create log group
     const logGroup = new logs.LogGroup(this, "LogGroup", {
-      logGroupName: `/ecs/argus-vector-${config.name}/qdrant`,
+      logGroupName: `/ecs/argus-vector-${environment}/qdrant`,
       retention:
-        config.name === "prod"
+        stage === "prod"
           ? logs.RetentionDays.THREE_MONTHS
           : logs.RetentionDays.ONE_WEEK,
       removalPolicy:
-        config.name === "prod"
+        stage === "prod"
           ? cdk.RemovalPolicy.RETAIN
           : cdk.RemovalPolicy.DESTROY,
     });
@@ -79,7 +80,7 @@ export class QdrantService extends Construct {
       this,
       "TaskDefinition",
       {
-        family: `argus-vector-${config.name}-qdrant`,
+        family: `argus-vector-${environment}-qdrant`,
         cpu: config.qdrant.cpu,
         memoryLimitMiB: config.qdrant.memoryMiB,
       }
@@ -102,7 +103,7 @@ export class QdrantService extends Construct {
     fileSystem.grantRootAccess(taskDefinition.taskRole);
 
     // Build environment variables
-    const environment: Record<string, string> = {
+    const environment_vars: Record<string, string> = {
       QDRANT__SERVICE__HTTP_PORT: "6333",
       QDRANT__SERVICE__GRPC_PORT: "6334",
       QDRANT__STORAGE__STORAGE_PATH: "/qdrant/storage",
@@ -110,8 +111,8 @@ export class QdrantService extends Construct {
 
     // Cluster mode configuration
     if (config.qdrant.nodeCount > 1 && namespace) {
-      environment.QDRANT__CLUSTER__ENABLED = "true";
-      environment.QDRANT__CLUSTER__P2P__PORT = "6335";
+      environment_vars.QDRANT__CLUSTER__ENABLED = "true";
+      environment_vars.QDRANT__CLUSTER__P2P__PORT = "6335";
     }
 
     // Build secrets
@@ -128,7 +129,7 @@ export class QdrantService extends Construct {
       image: ecs.ContainerImage.fromRegistry(
         `qdrant/qdrant:${config.qdrant.imageTag}`
       ),
-      environment,
+      environment: environment_vars,
       secrets,
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "qdrant",
@@ -153,7 +154,7 @@ export class QdrantService extends Construct {
 
     // Create Fargate service
     this.service = new ecs.FargateService(this, "Service", {
-      serviceName: `argus-vector-${config.name}-qdrant`,
+      serviceName: `argus-vector-${environment}-qdrant`,
       cluster: this.cluster,
       taskDefinition,
       desiredCount: config.qdrant.nodeCount,
@@ -161,7 +162,7 @@ export class QdrantService extends Construct {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       assignPublicIp: false,
       platformVersion: ecs.FargatePlatformVersion.LATEST,
-      enableExecuteCommand: config.name !== "prod", // Allow exec for debugging in non-prod
+      enableExecuteCommand: stage !== "prod", // Allow exec for debugging in non-prod
       minHealthyPercent: 100, // Don't reduce running tasks during deployments
       maxHealthyPercent: 200, // Allow double capacity during deployments
       cloudMapOptions: namespace
@@ -176,10 +177,10 @@ export class QdrantService extends Construct {
 
     // Create Application Load Balancer
     this.loadBalancer = new elbv2.ApplicationLoadBalancer(this, "ALB", {
-      loadBalancerName: `argus-vector-${config.name}-alb`,
+      loadBalancerName: `argus-vector-${environment}-alb`,
       vpc,
       internetFacing: false, // Internal only - access via VPC
-      securityGroup: this.createAlbSecurityGroup(vpc, config),
+      securityGroup: this.createAlbSecurityGroup(vpc, environment),
     });
 
     // REST API listener (6333)
@@ -206,17 +207,17 @@ export class QdrantService extends Construct {
     // for most QDrant operations.
 
     // Tags
-    cdk.Tags.of(this).add("Environment", config.name);
+    cdk.Tags.of(this).add("Environment", environment);
     cdk.Tags.of(this).add("Service", "argus-vector");
   }
 
   private createAlbSecurityGroup(
     vpc: ec2.IVpc,
-    config: EnvironmentConfig
+    environment: string
   ): ec2.SecurityGroup {
     const sg = new ec2.SecurityGroup(this, "AlbSecurityGroup", {
       vpc,
-      securityGroupName: `argus-vector-${config.name}-alb-sg`,
+      securityGroupName: `argus-vector-${environment}-alb-sg`,
       description: "Security group for QDrant ALB",
       allowAllOutbound: true,
     });

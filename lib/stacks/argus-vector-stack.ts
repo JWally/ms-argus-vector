@@ -10,7 +10,12 @@ export interface ArgusVectorStackProps extends cdk.StackProps {
 
 /**
  * Main infrastructure stack for Argus Vector (QDrant).
- * Composes VPC, EFS storage, and QDrant ECS service.
+ *
+ * Imports shared VPC from ms-argus-infra and deploys:
+ * - EFS storage for Qdrant persistence
+ * - QDrant ECS service with ALB
+ *
+ * Requires ms-argus-infra to be deployed first.
  */
 export class ArgusVectorStack extends cdk.Stack {
   public readonly vpc: ArgusVpc;
@@ -21,15 +26,13 @@ export class ArgusVectorStack extends cdk.Stack {
     super(scope, id, {
       ...props,
       env: props.config.env,
-      description: `Argus Vector (QDrant) infrastructure for ${props.config.name}`,
+      description: `Argus Vector (QDrant) infrastructure for ${props.config.environment}`,
     });
 
     const { config } = props;
+    const { environment } = config;
 
-    // Use stageName for cross-stack references, fallback to name
-    const stageName = config.stageName ?? config.name;
-
-    // Create VPC
+    // Import shared VPC from ms-argus-infra and create service-specific security groups
     this.vpc = new ArgusVpc(this, "Vpc", { config });
 
     // Create EFS storage
@@ -48,70 +51,51 @@ export class ArgusVectorStack extends cdk.Stack {
       accessPoint: this.storage.accessPoint,
     });
 
-    // Stack outputs - use stageName for cross-stack references
+    // =========================================================================
+    // STACK OUTPUTS
+    // =========================================================================
+
     new cdk.CfnOutput(this, "ClusterArn", {
       value: this.qdrantService.cluster.clusterArn,
       description: "ECS Cluster ARN",
-      exportName: `argus-vector-${stageName}-cluster-arn`,
+      exportName: `argus-vector-${environment}-cluster-arn`,
     });
 
     new cdk.CfnOutput(this, "ServiceArn", {
       value: this.qdrantService.service.serviceArn,
       description: "ECS Service ARN",
-      exportName: `argus-vector-${stageName}-service-arn`,
+      exportName: `argus-vector-${environment}-service-arn`,
     });
 
     new cdk.CfnOutput(this, "LoadBalancerDns", {
       value: this.qdrantService.loadBalancer.loadBalancerDnsName,
       description: "ALB DNS name for QDrant access",
-      exportName: `argus-vector-${stageName}-alb-dns`,
+      exportName: `argus-vector-${environment}-alb-dns`,
     });
 
     new cdk.CfnOutput(this, "QdrantRestEndpoint", {
       value: `http://${this.qdrantService.loadBalancer.loadBalancerDnsName}:6333`,
       description: "QDrant REST API endpoint",
-      exportName: `argus-vector-${stageName}-rest-endpoint`,
+      exportName: `argus-vector-${environment}-rest-endpoint`,
     });
 
     new cdk.CfnOutput(this, "ApiSecretArn", {
       value: this.qdrantService.apiSecret.secretArn,
       description: "QDrant API key secret ARN",
-      exportName: `argus-vector-${stageName}-api-secret-arn`,
+      exportName: `argus-vector-${environment}-api-secret-arn`,
     });
 
     new cdk.CfnOutput(this, "VpcId", {
       value: this.vpc.vpc.vpcId,
-      description: "VPC ID",
-      exportName: `argus-vector-${stageName}-vpc-id`,
+      description: "VPC ID (shared from ms-argus-infra)",
+      exportName: `argus-vector-${environment}-vpc-id`,
     });
 
     new cdk.CfnOutput(this, "FileSystemId", {
       value: this.storage.fileSystem.fileSystemId,
       description: "EFS File System ID",
-      exportName: `argus-vector-${stageName}-efs-id`,
+      exportName: `argus-vector-${environment}-efs-id`,
     });
-
-    // Legacy exports for backwards compatibility during migration
-    // These can be removed once all consumers use SSM parameters
-    if (stageName !== config.name) {
-      new cdk.CfnOutput(this, "LegacyApiSecretArn", {
-        value: this.qdrantService.apiSecret.secretArn,
-        description: "(Legacy) QDrant API key secret ARN",
-        exportName: `argus-vector-${config.name}-api-secret-arn`,
-      });
-
-      new cdk.CfnOutput(this, "LegacyRestEndpoint", {
-        value: `http://${this.qdrantService.loadBalancer.loadBalancerDnsName}:6333`,
-        description: "(Legacy) QDrant REST API endpoint",
-        exportName: `argus-vector-${config.name}-rest-endpoint`,
-      });
-
-      new cdk.CfnOutput(this, "LegacyVpcId", {
-        value: this.vpc.vpc.vpcId,
-        description: "(Legacy) VPC ID",
-        exportName: `argus-vector-${config.name}-vpc-id`,
-      });
-    }
 
     // =========================================================================
     // SSM PARAMETERS
@@ -120,23 +104,25 @@ export class ArgusVectorStack extends cdk.Stack {
     // =========================================================================
 
     new ssm.StringParameter(this, "QdrantUrlParam", {
-      parameterName: `/argus-vector/${stageName}/qdrant-url`,
+      parameterName: `/argus-vector/${environment}/qdrant-url`,
       stringValue: `http://${this.qdrantService.loadBalancer.loadBalancerDnsName}:6333`,
-      description: `QDrant REST API endpoint for ${stageName} environment`,
+      description: `QDrant REST API endpoint for ${environment} environment`,
       tier: ssm.ParameterTier.STANDARD,
     });
 
     new ssm.StringParameter(this, "QdrantSecretArnParam", {
-      parameterName: `/argus-vector/${stageName}/qdrant-secret-arn`,
+      parameterName: `/argus-vector/${environment}/qdrant-secret-arn`,
       stringValue: this.qdrantService.apiSecret.secretArn,
-      description: `QDrant API key secret ARN for ${stageName} environment`,
+      description: `QDrant API key secret ARN for ${environment} environment`,
       tier: ssm.ParameterTier.STANDARD,
     });
 
+    // Re-export VPC ID for consumers (e.g., ms-argus-api) that reference argus-vector
+    // This points to the shared VPC from ms-argus-infra
     new ssm.StringParameter(this, "VpcIdParam", {
-      parameterName: `/argus-vector/${stageName}/vpc-id`,
+      parameterName: `/argus-vector/${environment}/vpc-id`,
       stringValue: this.vpc.vpc.vpcId,
-      description: `VPC ID for ${stageName} environment`,
+      description: `VPC ID for ${environment} environment (shared from ms-argus-infra)`,
       tier: ssm.ParameterTier.STANDARD,
     });
   }
