@@ -74,6 +74,18 @@ def safe_get(data: Dict, *keys, default=None) -> Any:
     return current if current is not None else default
 
 
+def get_array_len(arr) -> int:
+    """
+    Get length of array, handling compacted format.
+    Compacted arrays are: {"$simhash": "...", "$len": N}
+    """
+    if isinstance(arr, list):
+        return len(arr)
+    if isinstance(arr, dict) and '$len' in arr:
+        return arr['$len']
+    return 0
+
+
 def hash_to_bits(value: str) -> List[int]:
     """
     Convert a string value to a list of 64 bits using SHA-256.
@@ -127,20 +139,27 @@ def extract_features(payload: Dict) -> Dict[str, str]:
     """
     features = {}
 
+    # Handle both old and new payload formats
+    # Old format: payload.fingerprint.loose / payload.fingerprint.stable
+    # New format: payload.device (flat structure)
     fp = payload.get('fingerprint', payload)
     stable = fp.get('stable', {})
     loose = fp.get('loose', {})
+    device = payload.get('device', {})
 
-    # Use stable metrics when available
-    navigator = stable.get('navigator', loose.get('navigator', {}))
-    worker = stable.get('workerScope', loose.get('workerScope', {}))
-    screen = loose.get('screen', {})
-    audio = stable.get('offlineAudioContext', loose.get('offlineAudioContext', {}))
-    canvas = stable.get('canvas2d', loose.get('canvas2d', {}))
-    webgl = stable.get('canvasWebgl', loose.get('canvasWebgl', {}))
-    timezone = stable.get('timezone', loose.get('timezone', {}))
-    headless = loose.get('headless', {})
-    resistance = loose.get('resistance', {})
+    # Use device (new format) or fall back to stable/loose (old format)
+    def get_section(name):
+        return device.get(name) or stable.get(name) or loose.get(name) or {}
+
+    navigator = get_section('navigator')
+    worker = get_section('workerScope')
+    screen = get_section('screen')
+    audio = get_section('offlineAudioContext')
+    canvas = get_section('canvas2d')
+    webgl = get_section('canvasWebgl')
+    timezone = get_section('timezone')
+    headless = get_section('headless')
+    resistance = get_section('resistance')
 
     # Canvas hashes - use directly (already hashes)
     if canvas.get('dataURI'):
@@ -206,18 +225,15 @@ def extract_features(payload: Dict) -> Dict[str, str]:
     # Language
     features['language'] = str(safe_get(navigator, 'language', default='unknown'))[:10]
 
-    # Font and extension counts
-    fonts = stable.get('fonts', loose.get('fonts', []))
-    if isinstance(fonts, list):
-        features['fonts.count'] = bucketize(len(fonts), [5, 10, 20, 40, 60, 80])
-    else:
-        features['fonts.count'] = 'unknown'
+    # Font and extension counts - handle compacted arrays
+    fonts_obj = device.get('fonts') or stable.get('fonts') or loose.get('fonts') or {}
+    fonts_arr = fonts_obj.get('fontFaceLoadFonts', []) if isinstance(fonts_obj, dict) else fonts_obj
+    font_count = get_array_len(fonts_arr)
+    features['fonts.count'] = bucketize(font_count, [5, 10, 20, 40, 60, 80]) if font_count > 0 else 'unknown'
 
     extensions = safe_get(webgl, 'extensions', default=[])
-    if isinstance(extensions, list):
-        features['webgl.extensions.count'] = bucketize(len(extensions), [10, 20, 30, 40, 50])
-    else:
-        features['webgl.extensions.count'] = 'unknown'
+    ext_count = get_array_len(extensions)
+    features['webgl.extensions.count'] = bucketize(ext_count, [10, 20, 30, 40, 50]) if ext_count > 0 else 'unknown'
 
     # Headless detection score
     headless_rating = safe_get(headless, 'likeHeadlessRating', default=0)

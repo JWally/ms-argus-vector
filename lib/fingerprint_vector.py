@@ -36,6 +36,18 @@ def safe_get(data: Dict, *keys, default=0.0) -> Any:
     return current if current is not None else default
 
 
+def get_array_len(arr) -> int:
+    """
+    Get length of array, handling compacted format.
+    Compacted arrays are: {"$simhash": "...", "$len": N}
+    """
+    if isinstance(arr, list):
+        return len(arr)
+    if isinstance(arr, dict) and '$len' in arr:
+        return arr['$len']
+    return 0
+
+
 def normalize(value: float, min_val: float, max_val: float) -> float:
     """Normalize value to 0-1 range."""
     if max_val == min_val:
@@ -139,22 +151,28 @@ def extract_vector(payload: Dict) -> List[float]:
     """
     vector = []
 
-    # Get fingerprint sections
+    # Get fingerprint sections - handle both old and new payload formats
+    # Old format: payload.fingerprint.loose / payload.fingerprint.stable
+    # New format: payload.device (flat structure)
     fp = payload.get('fingerprint', payload)
     stable = fp.get('stable', {})
     loose = fp.get('loose', {})
+    device = payload.get('device', {})
 
-    # Use stable metrics when available, fall back to loose
-    navigator = stable.get('navigator', loose.get('navigator', {}))
-    worker = stable.get('workerScope', loose.get('workerScope', {}))
-    screen = loose.get('screen', {})  # Screen is in loose
-    audio = stable.get('offlineAudioContext', loose.get('offlineAudioContext', {}))
-    canvas = stable.get('canvas2d', loose.get('canvas2d', {}))
-    webgl = stable.get('canvasWebgl', loose.get('canvasWebgl', {}))
-    timezone = stable.get('timezone', loose.get('timezone', {}))
-    headless = loose.get('headless', {})
-    svg = loose.get('svg', {})
-    resistance = loose.get('resistance', {})
+    # Use device (new format) or fall back to stable/loose (old format)
+    def get_section(name):
+        return device.get(name) or stable.get(name) or loose.get(name) or {}
+
+    navigator = get_section('navigator')
+    worker = get_section('workerScope')
+    screen = get_section('screen')
+    audio = get_section('offlineAudioContext')
+    canvas = get_section('canvas2d')
+    webgl = get_section('canvasWebgl')
+    timezone = get_section('timezone')
+    headless = get_section('headless')
+    svg = get_section('svg')
+    resistance = get_section('resistance')
 
     # =========================================================================
     # SECTION 1: Screen metrics (6 dims)
@@ -299,19 +317,16 @@ def extract_vector(payload: Dict) -> List[float]:
     # chromium flag
     vector.append(bool_to_float(safe_get(headless, 'chromium')))
 
-    # Font count (normalized)
-    fonts = stable.get('fonts', loose.get('fonts', []))
-    if isinstance(fonts, list):
-        vector.append(normalize(len(fonts), 0, 100))
-    else:
-        vector.append(0.5)
+    # Font count (normalized) - use fontFaceLoadFonts array
+    fonts_obj = device.get('fonts') or stable.get('fonts') or loose.get('fonts') or {}
+    fonts_arr = fonts_obj.get('fontFaceLoadFonts', []) if isinstance(fonts_obj, dict) else fonts_obj
+    font_count = get_array_len(fonts_arr)
+    vector.append(normalize(font_count, 0, 100))
 
     # WebGL extensions count
     extensions = safe_get(webgl, 'extensions', default=[])
-    if isinstance(extensions, list):
-        vector.append(normalize(len(extensions), 0, 60))
-    else:
-        vector.append(0.5)
+    ext_count = get_array_len(extensions)
+    vector.append(normalize(ext_count, 0, 60))
 
     # WASM support
     wasm = stable.get('wasm', loose.get('wasm', {}))
