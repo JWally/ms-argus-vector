@@ -50,6 +50,7 @@ export class QdrantService extends Construct {
       containerInsightsV2: stage === "prod"
         ? ecs.ContainerInsights.ENABLED
         : ecs.ContainerInsights.DISABLED,
+      enableFargateCapacityProviders: true,
     });
 
     // Create Cloud Map namespace for service discovery (cluster mode)
@@ -153,6 +154,12 @@ export class QdrantService extends Construct {
     });
 
     // Create Fargate service
+    // Use Fargate Spot for non-prod to reduce costs (~70% savings)
+    const capacityProviderStrategies: ecs.CapacityProviderStrategy[] =
+      stage !== "prod"
+        ? [{ capacityProvider: "FARGATE_SPOT", weight: 1 }]
+        : [{ capacityProvider: "FARGATE", weight: 1 }];
+
     this.service = new ecs.FargateService(this, "Service", {
       serviceName: `argus-vector-${environment}-qdrant`,
       cluster: this.cluster,
@@ -165,6 +172,7 @@ export class QdrantService extends Construct {
       enableExecuteCommand: stage !== "prod", // Allow exec for debugging in non-prod
       minHealthyPercent: 100, // Don't reduce running tasks during deployments
       maxHealthyPercent: 200, // Allow double capacity during deployments
+      capacityProviderStrategies,
       cloudMapOptions: namespace
         ? {
             name: "qdrant",
